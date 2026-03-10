@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepFake Guardian — Zoom Detection</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #060810;
+    --surface:   #0d1117;
+    --border:    #1e2535;
+    --text:      #e2e8f0;
+    --muted:     #4a5568;
+    --accent:    #00d4ff;
+    --danger:    #ff3860;
+    --safe:      #00e5a0;
+    --warn:      #ffa500;
+    --glow-safe: 0 0 20px rgba(0,229,160,.35);
+    --glow-fake: 0 0 20px rgba(255,56,96,.45);
+  }
+
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Noise texture overlay ── */
+  body::before {
+    content:'';
+    position:fixed; inset:0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
+    pointer-events:none; z-index:0;
+  }
+
+  /* ── Grid scan line effect ── */
+  body::after {
+    content:'';
+    position:fixed; inset:0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,212,255,.015) 2px, rgba(0,212,255,.015) 4px);
+    pointer-events:none; z-index:0;
+  }
+
+  /* ── Header ── */
+  header {
+    position:relative; z-index:10;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 36px;
+    border-bottom:1px solid var(--border);
+    background:rgba(6,8,16,.85);
+    backdrop-filter:blur(12px);
+  }
+
+  .logo {
+    display:flex; align-items:center; gap:14px;
+  }
+
+  .logo-icon {
+    width:40px; height:40px;
+    background:linear-gradient(135deg,#00d4ff,#0066ff);
+    border-radius:10px;
+    display:grid; place-items:center;
+    font-size:18px;
+    box-shadow:0 0 18px rgba(0,212,255,.4);
+  }
+
+  .logo-text {
+    font-family:'Syne',sans-serif;
+    font-weight:800; font-size:1.2rem;
+    letter-spacing:-.02em;
+  }
+
+  .logo-text span { color:var(--accent); }
+
+  .status-pill {
+    display:flex; align-items:center; gap:8px;
+    padding:6px 14px;
+    border-radius:999px;
+    border:1px solid var(--border);
+    font-size:.72rem;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    transition:all .3s;
+  }
+
+  .status-pill.active {
+    border-color:var(--safe);
+    color:var(--safe);
+    background:rgba(0,229,160,.08);
+    box-shadow:var(--glow-safe);
+  }
+
+  .status-pill.inactive { color:var(--muted); }
+
+  .status-dot {
+    width:7px; height:7px;
+    border-radius:50%;
+    background:currentColor;
+  }
+
+  .status-pill.active .status-dot {
+    animation:pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%,100%{opacity:1;transform:scale(1)}
+    50%{opacity:.4;transform:scale(1.3)}
+  }
+
+  /* ── Main layout ── */
+  main {
+    position:relative; z-index:5;
+    max-width:1300px; margin:0 auto;
+    padding:32px 24px;
+    display:grid;
+    grid-template-columns:340px 1fr;
+    gap:24px;
+  }
+
+  /* ── Panel base ── */
+  .panel {
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:16px;
+    overflow:hidden;
+  }
+
+  .panel-header {
+    padding:16px 20px;
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:10px;
+    font-family:'Syne',sans-serif;
+    font-weight:700; font-size:.8rem;
+    letter-spacing:.1em; text-transform:uppercase;
+    color:var(--muted);
+  }
+
+  .panel-header .icon { font-size:14px; }
+
+  /* ── Join form ── */
+  .join-form { padding:20px; display:flex; flex-direction:column; gap:14px; }
+
+  .field label {
+    display:block; font-size:.68rem; color:var(--muted);
+    letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px;
+  }
+
+  .field input {
+    width:100%;
+    background:#0a0e18;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:10px 14px;
+    color:var(--text);
+    font-family:'DM Mono',monospace;
+    font-size:.85rem;
+    outline:none;
+    transition:border-color .2s, box-shadow .2s;
+  }
+
+  .field input:focus {
+    border-color:var(--accent);
+    box-shadow:0 0 0 3px rgba(0,212,255,.12);
+  }
+
+  .btn-join {
+    width:100%;
+    padding:12px;
+    border-radius:10px;
+    border:none;
+    background:linear-gradient(135deg,#00d4ff,#0066ff);
+    color:#fff;
+    font-family:'Syne',sans-serif;
+    font-weight:700; font-size:.9rem;
+    cursor:pointer;
+    transition:transform .15s, box-shadow .15s;
+    box-shadow:0 0 18px rgba(0,212,255,.3);
+  }
+
+  .btn-join:hover { transform:translateY(-1px); box-shadow:0 0 28px rgba(0,212,255,.5); }
+  .btn-join:active { transform:translateY(0); }
+  .btn-join:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+
+  .btn-leave {
+    width:100%;
+    padding:10px;
+    border-radius:10px;
+    border:1px solid var(--danger);
+    background:transparent;
+    color:var(--danger);
+    font-family:'Syne',sans-serif;
+    font-weight:700; font-size:.85rem;
+    cursor:pointer;
+    transition:all .15s;
+  }
+
+  .btn-leave:hover { background:rgba(255,56,96,.1); }
+
+  /* ── Stats row ── */
+  .stats-row {
+    display:grid; grid-template-columns:repeat(3,1fr);
+    gap:1px; background:var(--border);
+  }
+
+  .stat-box {
+    padding:16px 12px;
+    background:var(--surface);
+    text-align:center;
+  }
+
+  .stat-val {
+    font-family:'Syne',sans-serif;
+    font-weight:800; font-size:1.5rem;
+    color:var(--accent);
+  }
+
+  .stat-lbl {
+    font-size:.65rem; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.08em;
+    margin-top:4px;
+  }
+
+  /* ── Participants grid ── */
+  .participants-grid {
+    padding:20px;
+    display:flex; flex-direction:column; gap:14px;
+  }
+
+  .empty-state {
+    padding:40px 20px;
+    text-align:center;
+    color:var(--muted);
+    font-size:.8rem;
+  }
+
+  .empty-icon { font-size:2.5rem; margin-bottom:12px; opacity:.4; }
+
+  /* ── Participant card ── */
+  .participant-card {
+    background:#0a0e18;
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:16px;
+    transition:border-color .4s, box-shadow .4s;
+    position:relative;
+    overflow:hidden;
+  }
+
+  .participant-card.fake {
+    border-color:var(--danger);
+    box-shadow:var(--glow-fake);
+  }
+
+  .participant-card.safe {
+    border-color:rgba(0,229,160,.3);
+    box-shadow:var(--glow-safe);
+  }
+
+  /* Animated threat stripe */
+  .participant-card.fake::before {
+    content:'';
+    position:absolute; top:0; left:0; right:0; height:2px;
+    background:linear-gradient(90deg, transparent, var(--danger), transparent);
+    animation:sweep 2s linear infinite;
+  }
+
+  @keyframes sweep {
+    0%{transform:translateX(-100%)}
+    100%{transform:translateX(100%)}
+  }
+
+  .card-top {
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:14px;
+  }
+
+  .participant-info { display:flex; align-items:center; gap:10px; }
+
+  .avatar {
+    width:36px; height:36px; border-radius:50%;
+    display:grid; place-items:center;
+    font-family:'Syne',sans-serif;
+    font-weight:700; font-size:.9rem;
+    background:linear-gradient(135deg,#1a2040,#0d1117);
+    border:1px solid var(--border);
+  }
+
+  .participant-name {
+    font-family:'Syne',sans-serif;
+    font-weight:600; font-size:.9rem;
+  }
+
+  .participant-frames {
+    font-size:.65rem; color:var(--muted); margin-top:2px;
+  }
+
+  .verdict-badge {
+    padding:4px 10px;
+    border-radius:999px;
+    font-size:.65rem;
+    font-weight:600;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+  }
+
+  .verdict-badge.real {
+    background:rgba(0,229,160,.15);
+    color:var(--safe);
+    border:1px solid rgba(0,229,160,.3);
+  }
+
+  .verdict-badge.fake {
+    background:rgba(255,56,96,.15);
+    color:var(--danger);
+    border:1px solid rgba(255,56,96,.4);
+    animation:badge-flash 1s ease-in-out infinite;
+  }
+
+  @keyframes badge-flash {
+    0%,100%{opacity:1}50%{opacity:.6}
+  }
+
+  /* ── Probability bar ── */
+  .prob-bar-wrap { margin-top:4px; }
+
+  .prob-labels {
+    display:flex; justify-content:space-between;
+    font-size:.65rem; color:var(--muted); margin-bottom:5px;
+  }
+
+  .prob-labels .val { color:var(--text); font-weight:500; }
+
+  .bar-track {
+    height:6px; background:#0a0e18;
+    border-radius:999px; overflow:hidden;
+    border:1px solid var(--border);
+  }
+
+  .bar-fill {
+    height:100%; border-radius:999px;
+    transition:width .6s cubic-bezier(.4,0,.2,1), background .4s;
+  }
+
+  .bar-fill.low    { background:var(--safe); }
+  .bar-fill.medium { background:var(--warn); }
+  .bar-fill.high   { background:var(--danger); }
+
+  /* ── Alert log ── */
+  .alert-list {
+    padding:0;
+    list-style:none;
+    max-height:280px;
+    overflow-y:auto;
+  }
+
+  .alert-list::-webkit-scrollbar { width:4px; }
+  .alert-list::-webkit-scrollbar-track { background:transparent; }
+  .alert-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+  .alert-item {
+    padding:12px 20px;
+    border-bottom:1px solid var(--border);
+    display:flex; gap:12px; align-items:flex-start;
+    animation:slide-in .3s ease;
+  }
+
+  @keyframes slide-in {
+    from{transform:translateX(-10px);opacity:0}
+    to{transform:none;opacity:1}
+  }
+
+  .alert-icon { font-size:14px; margin-top:1px; flex-shrink:0; }
+
+  .alert-text { flex:1; }
+  .alert-name { font-family:'Syne',sans-serif; font-weight:600; font-size:.8rem; }
+  .alert-meta { font-size:.65rem; color:var(--muted); margin-top:2px; }
+
+  .alert-prob {
+    font-family:'Syne',sans-serif;
+    font-weight:700; font-size:.85rem;
+    color:var(--danger);
+  }
+
+  /* ── Connection status bar ── */
+  .conn-bar {
+    position:fixed; bottom:0; left:0; right:0;
+    padding:8px 36px;
+    display:flex; align-items:center; gap:10px;
+    background:rgba(6,8,16,.9);
+    border-top:1px solid var(--border);
+    font-size:.68rem; color:var(--muted);
+    z-index:100;
+    backdrop-filter:blur(8px);
+  }
+
+  .conn-bar .dot {
+    width:6px; height:6px; border-radius:50%;
+    background:var(--muted);
+  }
+  .conn-bar.connected .dot { background:var(--safe); box-shadow:0 0 6px var(--safe); }
+
+  /* ── Mode selector ── */
+  .mode-tabs {
+    display:flex; gap:4px;
+    background:#0a0e18;
+    border-radius:8px; padding:4px;
+    margin-bottom:4px;
+  }
+
+  .mode-tab {
+    flex:1; padding:7px;
+    border-radius:6px; border:none;
+    background:transparent; color:var(--muted);
+    font-family:'DM Mono',monospace; font-size:.72rem;
+    cursor:pointer; text-transform:uppercase; letter-spacing:.06em;
+    transition:all .2s;
+  }
+
+  .mode-tab.active {
+    background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,102,255,.15));
+    color:var(--accent);
+    border:1px solid rgba(0,212,255,.2);
+  }
+
+  /* ── Right column ── */
+  .right-col { display:flex; flex-direction:column; gap:24px; }
+
+  /* ── Responsive ── */
+  @media(max-width:900px){
+    main { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🛡️</div>
+    <div>
+      <div class="logo-text">DeepFake <span>Guardian</span></div>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:2px">Real-time Zoom Detection System</div>
+    </div>
+  </div>
+  <div id="statusPill" class="status-pill inactive">
+    <div class="status-dot"></div>
+    <span id="statusText">Offline</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Left column ── -->
+  <div style="display:flex;flex-direction:column;gap:24px;">
+
+    <!-- Join panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="icon">🔗</span> Meeting Connection
+      </div>
+      <div class="join-form">
+        <div style="margin-bottom:4px">
+          <div style="font-size:.65rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Integration Mode</div>
+          <div class="mode-tabs">
+            <button class="mode-tab active" onclick="setMode('mock')">Mock</button>
+            <button class="mode-tab" onclick="setMode('sdk')">Zoom SDK</button>
+            <button class="mode-tab" onclick="setMode('recall')">Recall.ai</button>
+          </div>
+          <div id="modeHint" style="font-size:.65rem;color:var(--muted);margin-top:6px">
+            📷 Uses local webcam/video — no Zoom credentials needed
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Meeting ID</label>
+          <input id="meetingId" type="text" placeholder="123 456 7890">
+        </div>
+        <div class="field">
+          <label>Password (optional)</label>
+          <input id="password" type="password" placeholder="••••••••">
+        </div>
+        <div class="field">
+          <label>Bot Display Name</label>
+          <input id="displayName" type="text" value="DeepFake Guardian">
+        </div>
+        <button id="joinBtn" class="btn-join" onclick="joinMeeting()">
+          🚀 Join & Start Detection
+        </button>
+        <button id="leaveBtn" class="btn-leave" onclick="leaveMeeting()" style="display:none">
+          ✕ Leave Meeting
+        </button>
+      </div>
+    </div>
+
+    <!-- Live stats -->
+    <div class="panel">
+      <div class="panel-header"><span class="icon">📊</span> Live Stats</div>
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-val" id="statParticipants">0</div>
+          <div class="stat-lbl">Participants</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val" id="statFrames">0</div>
+          <div class="stat-lbl">Frames Analyzed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val" id="statAlerts" style="color:var(--danger)">0</div>
+          <div class="stat-lbl">Alerts Fired</div>
+        </div>
+      </div>
+      <div style="padding:12px 20px;border-top:1px solid var(--border);font-size:.68rem;color:var(--muted);display:flex;justify-content:space-between">
+        <span>Session duration</span>
+        <span id="sessionTimer" style="color:var(--text);font-weight:500">--:--</span>
+      </div>
+    </div>
+
+    <!-- Model info -->
+    <div class="panel">
+      <div class="panel-header"><span class="icon">🤖</span> Model Info</div>
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px;font-size:.75rem;">
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Architecture</span><span>EfficientNet-B4 + LSTM</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Temporal frames</span><span>16 frames / inference</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Input size</span><span>224 × 224 px</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Fake threshold</span><span style="color:var(--accent)">65% probability</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Alert at</span><span style="color:var(--warn)">5 consecutive detections</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Train dataset</span><span>FaceForensics++</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Val dataset</span><span>Celeb-DF V2</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right column ── -->
+  <div class="right-col">
+
+    <!-- Participants -->
+    <div class="panel" style="flex:1">
+      <div class="panel-header">
+        <span class="icon">👥</span> Participant Analysis
+        <span id="participantCount" style="margin-left:auto;background:var(--border);padding:2px 8px;border-radius:999px;font-size:.65rem">0</span>
+      </div>
+
+      <!-- ── Webcam Feed with Face Detection ── -->
+      <div id="webcamContainer" style="
+        position:relative; margin:16px 16px 0;
+        border-radius:12px; overflow:hidden;
+        background:#0a0e18; border:1px solid var(--border);
+        display:none;
+      ">
+        <!-- Live badge -->
+        <div style="
+          position:absolute;top:10px;left:10px;z-index:20;
+          background:rgba(0,0,0,.7);backdrop-filter:blur(6px);
+          border:1px solid rgba(255,255,255,.12);
+          border-radius:999px;padding:4px 10px;
+          display:flex;align-items:center;gap:6px;
+          font-size:.65rem;color:#fff;font-family:'Syne',sans-serif;font-weight:600;
+        ">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--danger);animation:pulse 1.2s infinite"></span>
+          LIVE CAM
+        </div>
+
+        <!-- Verdict overlay (top right) -->
+        <div id="camVerdict" style="
+          position:absolute;top:10px;right:10px;z-index:20;
+          padding:5px 12px;border-radius:999px;
+          font-family:'Syne',sans-serif;font-weight:700;font-size:.72rem;
+          background:rgba(0,0,0,.7);backdrop-filter:blur(6px);
+          border:1px solid var(--border);color:var(--muted);
+          transition:all .3s;
+        ">● ANALYZING</div>
+
+        <!-- Probability bar at bottom -->
+        <div style="position:absolute;bottom:0;left:0;right:0;z-index:20;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:24px 14px 10px">
+          <div style="display:flex;justify-content:space-between;font-size:.62rem;color:rgba(255,255,255,.7);margin-bottom:5px">
+            <span>FAKE PROBABILITY</span>
+            <span id="camProbPct" style="font-weight:600;color:#fff">0%</span>
+          </div>
+          <div style="height:5px;background:rgba(255,255,255,.15);border-radius:999px;overflow:hidden">
+            <div id="camProbBar" style="height:100%;width:0%;border-radius:999px;background:var(--safe);transition:width .5s,background .4s"></div>
+          </div>
+        </div>
+
+        <!-- Video element -->
+        <video id="webcamVideo" autoplay muted playsinline style="width:100%;display:block;max-height:300px;object-fit:cover"></video>
+        <!-- Backend mock preview (fallback when browser camera is busy) -->
+        <img id="mockPreviewImage" alt="Mock camera preview" style="width:100%;display:none;max-height:300px;object-fit:cover">
+        <!-- Canvas overlay for face boxes -->
+        <canvas id="faceCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
+        <!-- Placeholder before camera loads -->
+        <div id="camPlaceholder" style="
+          position:absolute;inset:0;
+          display:flex;flex-direction:column;align-items:center;justify-content:center;
+          background:#07090f;gap:12px;
+        ">
+          <div style="font-size:2.2rem;opacity:.4">📷</div>
+          <div style="font-size:.75rem;color:var(--muted)">Requesting camera access...</div>
+          <button onclick="startWebcam()" style="
+            margin-top:4px;padding:8px 20px;
+            background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,102,255,.15));
+            border:1px solid rgba(0,212,255,.3);border-radius:8px;
+            color:var(--accent);font-family:'Syne',sans-serif;
+            font-weight:600;font-size:.75rem;cursor:pointer;
+          ">Enable Camera</button>
+        </div>
+      </div>
+
+      <!-- Alert banner under webcam -->
+      <div id="camAlertBanner" style="
+        display:none;margin:10px 16px 0;padding:10px 14px;
+        border-radius:10px;
+        background:rgba(255,56,96,.12);border:1px solid rgba(255,56,96,.35);
+        display:none;align-items:center;gap:10px;
+        font-size:.78rem;animation:slide-in .3s ease;
+      ">
+        <span style="font-size:1.1rem">🚨</span>
+        <div>
+          <div style="font-family:'Syne',sans-serif;font-weight:700;color:var(--danger)" id="camAlertTitle">DEEPFAKE DETECTED</div>
+          <div style="color:var(--muted);font-size:.65rem;margin-top:2px" id="camAlertSub"></div>
+        </div>
+      </div>
+
+      <div id="participantsContainer" class="participants-grid">
+        <div class="empty-state">
+          <div class="empty-icon">📡</div>
+          <div>Join a meeting to start real-time detection</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alerts -->
+    <div class="panel" style="max-height:360px">
+      <div class="panel-header">
+        <span class="icon">🚨</span> Alert Log
+        <span id="alertCount" style="margin-left:auto;background:rgba(255,56,96,.15);color:var(--danger);padding:2px 8px;border-radius:999px;font-size:.65rem">0 alerts</span>
+      </div>
+      <ul id="alertList" class="alert-list">
+        <li style="padding:20px;color:var(--muted);font-size:.75rem;text-align:center">No alerts yet</li>
+      </ul>
+    </div>
+
+  </div>
+</main>
+
+<!-- ── Video Upload Section ── -->
+<section id="uploadSection" style="position:relative;z-index:5;max-width:1300px;margin:0 auto 80px;padding:0 24px;">
+  <div class="panel">
+    <div class="panel-header">
+      <span class="icon">🎬</span> Video Deepfake Analyzer
+      <span style="margin-left:auto;font-size:.65rem;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">Upload any video to check if it's a deepfake</span>
+    </div>
+
+    <!-- Drop zone -->
+    <div id="dropZone" style="
+      margin:24px;
+      border:2px dashed var(--border);
+      border-radius:14px;
+      padding:48px 24px;
+      text-align:center;
+      cursor:pointer;
+      transition:all .25s;
+      background:#07090f;
+    "
+    onclick="document.getElementById('videoFileInput').click()"
+    ondragover="handleDragOver(event)"
+    ondragleave="handleDragLeave(event)"
+    ondrop="handleDrop(event)"
+    >
+      <div style="font-size:2.8rem;margin-bottom:14px">🎥</div>
+      <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;margin-bottom:8px">Drop your video here</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:20px">or click to browse — MP4, AVI, MOV, MKV (max 200MB)</div>
+      <button style="
+        padding:10px 28px;
+        background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,102,255,.15));
+        border:1px solid rgba(0,212,255,.3);
+        border-radius:8px;
+        color:var(--accent);
+        font-family:'Syne',sans-serif;
+        font-weight:600;font-size:.8rem;
+        cursor:pointer;
+      ">📂 Browse Files</button>
+      <input type="file" id="videoFileInput" accept="video/*" style="display:none" onchange="handleFileSelect(event)">
+    </div>
+
+    <!-- Selected file info -->
+    <div id="fileInfo" style="display:none;margin:0 24px 16px;padding:14px 16px;background:#07090f;border:1px solid var(--border);border-radius:10px;display:none;align-items:center;gap:12px;">
+      <span style="font-size:1.4rem">🎞️</span>
+      <div style="flex:1">
+        <div id="fileName" style="font-family:'Syne',sans-serif;font-weight:600;font-size:.85rem"></div>
+        <div id="fileSize" style="font-size:.68rem;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <button onclick="clearFile()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem">✕</button>
+    </div>
+
+    <!-- Analyze button -->
+    <div style="padding:0 24px 24px">
+      <button id="analyzeBtn" onclick="analyzeVideo()" disabled style="
+        width:100%;padding:13px;
+        background:linear-gradient(135deg,#00d4ff,#0066ff);
+        border:none;border-radius:10px;
+        color:#fff;font-family:'Syne',sans-serif;
+        font-weight:700;font-size:.95rem;
+        cursor:pointer;opacity:.4;
+        transition:all .2s;
+        box-shadow:0 0 20px rgba(0,212,255,.2);
+      ">🔍 Analyze Video</button>
+    </div>
+
+    <!-- Progress bar -->
+    <div id="progressWrap" style="display:none;padding:0 24px 20px;">
+      <div style="display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);margin-bottom:8px">
+        <span id="progressLabel">Analyzing frames...</span>
+        <span id="progressPct"></span>
+      </div>
+      <div style="height:6px;background:#0a0e18;border-radius:999px;overflow:hidden;border:1px solid var(--border)">
+        <div id="progressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#00d4ff,#0066ff);border-radius:999px;transition:width .4s"></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="analysisResult" style="display:none;margin:0 24px 24px;">
+
+      <!-- Verdict banner -->
+      <div id="verdictBanner" style="
+        padding:20px 24px;
+        border-radius:12px;
+        display:flex;align-items:center;gap:16px;
+        margin-bottom:20px;
+      ">
+        <div id="verdictIcon" style="font-size:2.5rem"></div>
+        <div>
+          <div id="verdictTitle" style="font-family:'Syne',sans-serif;font-weight:800;font-size:1.4rem"></div>
+          <div id="verdictSub" style="font-size:.78rem;margin-top:4px;opacity:.8"></div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div id="verdictProb" style="font-family:'Syne',sans-serif;font-weight:800;font-size:2rem"></div>
+          <div style="font-size:.65rem;color:var(--muted)">fake probability</div>
+        </div>
+      </div>
+
+      <!-- Stats grid -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <div style="background:var(--surface);padding:14px;text-align:center">
+          <div id="rDuration" style="font-family:'Syne',sans-serif;font-weight:700;font-size:1.1rem;color:var(--accent)">--</div>
+          <div style="font-size:.62rem;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:.06em">Duration</div>
+        </div>
+        <div style="background:var(--surface);padding:14px;text-align:center">
+          <div id="rFrames" style="font-family:'Syne',sans-serif;font-weight:700;font-size:1.1rem;color:var(--accent)">--</div>
+          <div style="font-size:.62rem;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:.06em">Frames</div>
+        </div>
+        <div style="background:var(--surface);padding:14px;text-align:center">
+          <div id="rSegments" style="font-family:'Syne',sans-serif;font-weight:700;font-size:1.1rem;color:var(--accent)">--</div>
+          <div style="font-size:.62rem;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:.06em">Segments</div>
+        </div>
+        <div style="background:var(--surface);padding:14px;text-align:center">
+          <div id="rConfidence" style="font-family:'Syne',sans-serif;font-weight:700;font-size:1.1rem;color:var(--accent)">--</div>
+          <div style="font-size:.62rem;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:.06em">Confidence</div>
+        </div>
+      </div>
+
+      <!-- Timeline chart -->
+      <div style="background:#07090f;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+        <div style="font-size:.7rem;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.08em">Fake Probability Timeline</div>
+        <div id="timelineChart" style="display:flex;align-items:flex-end;gap:3px;height:80px;overflow-x:auto;padding-bottom:4px"></div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px">
+          <span style="font-size:.6rem;color:var(--muted)" id="timeStart">0:00</span>
+          <span style="font-size:.6rem;color:var(--muted)">── Fake threshold (65%) ──</span>
+          <span style="font-size:.6rem;color:var(--muted)" id="timeEnd"></span>
+        </div>
+      </div>
+
+      <!-- Segment table -->
+      <div style="background:#07090f;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Segment Breakdown</div>
+        <div id="segmentTable" style="max-height:240px;overflow-y:auto"></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Connection bar -->
+<div id="connBar" class="conn-bar">
+  <div class="dot"></div>
+  <span id="connText">Connecting to backend...</span>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+// Auto-detect: if served via FastAPI (http://), use relative URLs. If file://, use localhost.
+const IS_HTTP  = location.protocol === "http:" || location.protocol === "https:";
+const API      = IS_HTTP ? "" : "http://localhost:8000";
+const WS_URL   = IS_HTTP
+  ? `ws://${location.host}/ws/live`
+  : "ws://localhost:8000/ws/live";
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let ws             = null;
+let sessionActive  = false;
+let sessionStart   = null;
+let timerInterval  = null;
+let currentMode    = "mock";
+let alertCount     = 0;
+let framesTotal    = 0;
+let participants   = {};
+
+const HINTS = {
+  mock:   "📷 Uses local webcam/video — no Zoom credentials needed",
+  sdk:    "⚡ Requires Zoom Meeting SDK installed on server — fastest, direct",
+  recall: "☁️ Uses Recall.ai cloud bot — easy setup, requires API key",
+};
+
+// ── Mode selector ─────────────────────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll(".mode-tab").forEach(t => t.classList.toggle("active", t.textContent.toLowerCase() === mode));
+  document.getElementById("modeHint").textContent = HINTS[mode];
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    const bar = document.getElementById("connBar");
+    bar.classList.add("connected");
+    document.getElementById("connText").textContent = "Connected to detection server";
+    setInterval(() => ws && ws.readyState === 1 && ws.send("ping"), 20000);
+  };
+
+  ws.onclose = () => {
+    document.getElementById("connBar").classList.remove("connected");
+    document.getElementById("connText").textContent = "Reconnecting...";
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    document.getElementById("connText").textContent = "Backend offline — start server with: python main.py";
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleMessage(msg);
+  };
+}
+
+function handleMessage(msg) {
+  switch(msg.type) {
+    case "session_started":
+      onSessionStarted(msg);
+      break;
+    case "session_ended":
+      onSessionEnded();
+      break;
+    case "participant_joined":
+      addParticipantCard(msg.participant_id, msg.name);
+      break;
+    case "detection_update":
+      updateParticipantCard(msg.participant);
+      framesTotal += msg.participant.frames_analyzed || 0;
+      document.getElementById("statFrames").textContent = formatNum(framesTotal);
+      break;
+    case "deepfake_alert":
+      addAlert(msg);
+      break;
+    case "init":
+      if(msg.participants) msg.participants.forEach(p => updateParticipantCard(p));
+      break;
+  }
+}
+
+// ── Join / Leave ──────────────────────────────────────────────────────────────
+async function joinMeeting() {
+  const meetingId   = document.getElementById("meetingId").value.trim();
+  const password    = document.getElementById("password").value.trim();
+  const displayName = document.getElementById("displayName").value.trim();
+
+  if(!meetingId && currentMode !== "mock") {
+    alert("Please enter a Meeting ID");
+    return;
+  }
+
+  const btn = document.getElementById("joinBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Joining...";
+
+  try {
+    const res = await fetch(`${API}/api/join`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        meeting_id:   meetingId || "mock_meeting",
+        password:     password,
+        display_name: displayName || "DeepFake Guardian",
+      })
+    });
+
+    if(!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to join");
+    }
+
+    const data = await res.json();
+    console.log("Joined:", data);
+
+    // ── Show webcam immediately on successful join ──
+    analysisActive = true;
+    document.getElementById("webcamContainer").style.display = "block";
+    if(!webcamStream) {
+      await startWebcam();
+    } else {
+      if(scanAnim) cancelAnimationFrame(scanAnim);
+      document.getElementById("camPlaceholder").style.display = "none";
+      if(!webcamInterval) webcamInterval = setInterval(captureAndAnalyze, CAM_INTERVAL);
+    }
+
+  } catch(err) {
+    btn.disabled = false;
+    btn.textContent = "🚀 Join & Start Detection";
+    analysisActive = false;
+    alert("Error: " + err.message);
+  }
+}
+
+async function leaveMeeting() {
+  try {
+    await fetch(`${API}/api/leave`, { method:"POST" });
+  } catch(e) {}
+  onSessionEnded();
+}
+
+function onSessionStarted(msg) {
+  sessionActive = true;
+  sessionStart  = Date.now();
+  participants  = {};
+
+  document.getElementById("joinBtn").style.display   = "none";
+  document.getElementById("leaveBtn").style.display  = "block";
+  const pill = document.getElementById("statusPill");
+  pill.classList.remove("inactive");
+  pill.classList.add("active");
+  document.getElementById("statusText").textContent = `LIVE — ${msg.meeting_id}`;
+
+  document.getElementById("participantsContainer").innerHTML = `
+    <div class="empty-state"><div class="empty-icon">👁️</div><div>Monitoring participants...</div></div>`;
+
+  timerInterval = setInterval(updateTimer, 1000);
+}
+
+function onSessionEnded() {
+  sessionActive = false;
+  clearInterval(timerInterval);
+
+  document.getElementById("joinBtn").style.display  = "block";
+  document.getElementById("joinBtn").disabled       = false;
+  document.getElementById("joinBtn").textContent    = "🚀 Join & Start Detection";
+  document.getElementById("leaveBtn").style.display = "none";
+
+  const pill = document.getElementById("statusPill");
+  pill.classList.remove("active");
+  pill.classList.add("inactive");
+  document.getElementById("statusText").textContent = "Offline";
+  document.getElementById("sessionTimer").textContent = "--:--";
+}
+
+// ── Participant cards ─────────────────────────────────────────────────────────
+function addParticipantCard(id, name) {
+  participants[id] = { id, name, fake_probability:0, is_fake:false, frames_analyzed:0, confidence:"LOW" };
+  renderParticipants();
+}
+
+function updateParticipantCard(p) {
+  participants[p.id] = p;
+  document.getElementById("statParticipants").textContent = Object.keys(participants).length;
+  document.getElementById("participantCount").textContent = Object.keys(participants).length;
+  renderParticipants();
+}
+
+function renderParticipants() {
+  const container = document.getElementById("participantsContainer");
+  const list      = Object.values(participants);
+
+  if(!list.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">👁️</div><div>Monitoring participants...</div></div>`;
+    return;
+  }
+
+  container.innerHTML = list.map(p => {
+    const prob    = p.fake_probability || 0;
+    const pct     = Math.round(prob * 100);
+    const isFake  = p.is_fake;
+    const barCls  = prob > .65 ? "high" : prob > .4 ? "medium" : "low";
+    const initials = (p.name || "?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+
+    return `
+      <div class="participant-card ${isFake ? "fake" : "safe"}">
+        <div class="card-top">
+          <div class="participant-info">
+            <div class="avatar">${initials}</div>
+            <div>
+              <div class="participant-name">${escHtml(p.name)}</div>
+              <div class="participant-frames">${formatNum(p.frames_analyzed)} frames analyzed</div>
+            </div>
+          </div>
+          <div class="verdict-badge ${isFake ? "fake" : "real"}">${isFake ? "⚠ FAKE" : "✓ REAL"}</div>
+        </div>
+        <div class="prob-bar-wrap">
+          <div class="prob-labels">
+            <span>Fake probability</span>
+            <span class="val">${pct}% <span style="font-size:.6rem;color:var(--muted)">${p.confidence}</span></span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill ${barCls}" style="width:${pct}%"></div>
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+// ── Alerts ────────────────────────────────────────────────────────────────────
+function addAlert(msg) {
+  alertCount++;
+  document.getElementById("statAlerts").textContent = alertCount;
+  document.getElementById("alertCount").textContent  = alertCount + " alert" + (alertCount>1?"s":"");
+
+  const list = document.getElementById("alertList");
+  if(list.querySelector("li[style]")) list.innerHTML = "";
+
+  const t = new Date(msg.timestamp * 1000).toLocaleTimeString();
+  const pct = Math.round(msg.probability * 100);
+  const li  = document.createElement("li");
+  li.className = "alert-item";
+  li.innerHTML = `
+    <span class="alert-icon">🚨</span>
+    <div class="alert-text">
+      <div class="alert-name">${escHtml(msg.name)}</div>
+      <div class="alert-meta">${t} · ${msg.confidence} confidence · ID: ${msg.participant_id}</div>
+    </div>
+    <div class="alert-prob">${pct}%</div>`;
+
+  list.insertBefore(li, list.firstChild);
+
+  // Keep max 50 alerts
+  while(list.children.length > 50) list.removeChild(list.lastChild);
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────────
+function updateTimer() {
+  if(!sessionStart) return;
+  const secs = Math.floor((Date.now() - sessionStart) / 1000);
+  const m = String(Math.floor(secs / 60)).padStart(2,"0");
+  const s = String(secs % 60).padStart(2,"0");
+  document.getElementById("sessionTimer").textContent = m + ":" + s;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function formatNum(n) {
+  if(n >= 1000000) return (n/1000000).toFixed(1)+"M";
+  if(n >= 1000)    return (n/1000).toFixed(1)+"K";
+  return String(n||0);
+}
+
+// ── Poll stats periodically ───────────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const res  = await fetch(`${API}/api/status`);
+    const data = await res.json();
+    if(data.frames_analyzed) {
+      framesTotal = data.frames_analyzed;
+      document.getElementById("statFrames").textContent = formatNum(framesTotal);
+    }
+  } catch(e) {}
+}
+
+setInterval(pollStatus, 5000);
+
+// ── Video Upload ──────────────────────────────────────────────────────────────
+
+let selectedFile = null;
+
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById("dropZone").style.borderColor = "var(--accent)";
+  document.getElementById("dropZone").style.background  = "rgba(0,212,255,.05)";
+}
+
+function handleDragLeave(e) {
+  document.getElementById("dropZone").style.borderColor = "var(--border)";
+  document.getElementById("dropZone").style.background  = "#07090f";
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  handleDragLeave(e);
+  const file = e.dataTransfer.files[0];
+  if(file) setFile(file);
+}
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if(file) setFile(file);
+}
+
+function setFile(file) {
+  selectedFile = file;
+  const mb = (file.size / 1024 / 1024).toFixed(1);
+
+  document.getElementById("dropZone").style.display  = "none";
+  const fi = document.getElementById("fileInfo");
+  fi.style.display = "flex";
+  document.getElementById("fileName").textContent = file.name;
+  document.getElementById("fileSize").textContent = `${mb} MB · ${file.type || "video"}`;
+
+  const btn = document.getElementById("analyzeBtn");
+  btn.disabled = false;
+  btn.style.opacity = "1";
+  btn.style.cursor  = "pointer";
+
+  // Hide previous result
+  document.getElementById("analysisResult").style.display = "none";
+  document.getElementById("progressWrap").style.display   = "none";
+}
+
+function clearFile() {
+  selectedFile = null;
+  document.getElementById("dropZone").style.display  = "block";
+  document.getElementById("fileInfo").style.display  = "none";
+  document.getElementById("videoFileInput").value    = "";
+  document.getElementById("analysisResult").style.display = "none";
+  document.getElementById("progressWrap").style.display   = "none";
+  const btn = document.getElementById("analyzeBtn");
+  btn.disabled      = true;
+  btn.style.opacity = "0.4";
+}
+
+async function analyzeVideo() {
+  if(!selectedFile) return;
+
+  const btn = document.getElementById("analyzeBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Analyzing...";
+  btn.style.opacity = "0.7";
+
+  // Show progress
+  document.getElementById("progressWrap").style.display = "block";
+  document.getElementById("analysisResult").style.display = "none";
+
+  // Animate progress bar (fake progress while waiting)
+  let fakeProgress = 0;
+  const progBar   = document.getElementById("progressBar");
+  const progLabel = document.getElementById("progressLabel");
+  const progPct   = document.getElementById("progressPct");
+  const progTimer = setInterval(() => {
+    if(fakeProgress < 85) {
+      fakeProgress += Math.random() * 4;
+      progBar.style.width = Math.min(fakeProgress, 85) + "%";
+      progPct.textContent = Math.round(Math.min(fakeProgress, 85)) + "%";
+
+      if(fakeProgress < 20)       progLabel.textContent = "Uploading video...";
+      else if(fakeProgress < 45)  progLabel.textContent = "Extracting frames...";
+      else if(fakeProgress < 70)  progLabel.textContent = "Detecting faces...";
+      else                        progLabel.textContent = "Running deepfake model...";
+    }
+  }, 300);
+
+  try {
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    const res = await fetch(`${API}/api/analyze-video`, {
+      method: "POST",
+      body:   formData,
+    });
+
+    clearInterval(progTimer);
+    progBar.style.width  = "100%";
+    progPct.textContent  = "100%";
+    progLabel.textContent = "Analysis complete!";
+
+    if(!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Analysis failed");
+    }
+
+    const data = await res.json();
+    setTimeout(() => {
+      document.getElementById("progressWrap").style.display = "none";
+      showAnalysisResult(data);
+    }, 600);
+
+  } catch(err) {
+    clearInterval(progTimer);
+    document.getElementById("progressWrap").style.display = "none";
+    alert("Error: " + err.message);
+  } finally {
+    btn.disabled      = false;
+    btn.textContent   = "🔍 Analyze Video";
+    btn.style.opacity = "1";
+  }
+}
+
+function showAnalysisResult(data) {
+  const result = document.getElementById("analysisResult");
+  result.style.display = "block";
+
+  const isFake = data.is_fake;
+  const prob   = data.avg_fake_probability || 0;
+  const pct    = Math.round(prob * 100);
+
+  // Verdict banner
+  const banner = document.getElementById("verdictBanner");
+  banner.style.background = isFake
+    ? "linear-gradient(135deg,rgba(255,56,96,.15),rgba(255,56,96,.05))"
+    : "linear-gradient(135deg,rgba(0,229,160,.12),rgba(0,229,160,.03))";
+  banner.style.border = `1px solid ${isFake ? "rgba(255,56,96,.4)" : "rgba(0,229,160,.3)"}`;
+
+  document.getElementById("verdictIcon").textContent  = isFake ? "⚠️" : "✅";
+  document.getElementById("verdictTitle").textContent = isFake ? "DEEPFAKE DETECTED" : "AUTHENTIC VIDEO";
+  document.getElementById("verdictTitle").style.color = isFake ? "var(--danger)" : "var(--safe)";
+  document.getElementById("verdictSub").textContent   = isFake
+    ? `${data.fake_segments} of ${data.total_segments} segments flagged as manipulated`
+    : `Video appears genuine across all ${data.total_segments} analyzed segments`;
+  document.getElementById("verdictProb").textContent  = pct + "%";
+  document.getElementById("verdictProb").style.color  = isFake ? "var(--danger)" : "var(--safe)";
+
+  // Stats
+  document.getElementById("rDuration").textContent   = data.duration_sec + "s";
+  document.getElementById("rFrames").textContent     = (data.frames_analyzed || data.total_frames || 0).toLocaleString();
+  document.getElementById("rSegments").textContent   = data.total_segments;
+  document.getElementById("rConfidence").textContent = data.overall_confidence;
+
+  // Timeline chart
+  const chart = document.getElementById("timelineChart");
+  chart.innerHTML = "";
+  const segs = data.segments || [];
+  const maxW = Math.max(4, Math.floor((chart.parentElement.offsetWidth - 32) / Math.max(segs.length, 1)) - 3);
+  const barW = Math.min(maxW, 24);
+
+  segs.forEach(s => {
+    const h    = Math.round(s.fake_probability * 76);
+    const col  = s.fake_probability > 0.65 ? "var(--danger)" : s.fake_probability > 0.4 ? "var(--warn)" : "var(--safe)";
+    const bar  = document.createElement("div");
+    bar.title  = `${s.timestamp_label} — ${Math.round(s.fake_probability*100)}% fake`;
+    bar.style.cssText = `
+      width:${barW}px; height:${Math.max(h,4)}px; flex-shrink:0;
+      background:${col}; border-radius:3px 3px 0 0; opacity:.85;
+      cursor:pointer; transition:opacity .15s;
+    `;
+    bar.onmouseover = () => bar.style.opacity = "1";
+    bar.onmouseout  = () => bar.style.opacity = ".85";
+    chart.appendChild(bar);
+  });
+
+  // Timeline labels
+  if(segs.length > 0) {
+    document.getElementById("timeEnd").textContent = segs[segs.length-1].timestamp_label;
+  }
+
+  // Threshold line (CSS overlay hint shown in label text — simple approach)
+
+  // Segment table
+  const table = document.getElementById("segmentTable");
+  table.innerHTML = segs.map(s => {
+    const sp  = Math.round(s.fake_probability * 100);
+    const col = s.is_fake ? "var(--danger)" : "var(--safe)";
+    return `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);font-size:.75rem;">
+        <span style="color:var(--muted);width:36px;flex-shrink:0">${s.timestamp_label}</span>
+        <div style="flex:1;height:5px;background:#0a0e18;border-radius:999px;overflow:hidden">
+          <div style="height:100%;width:${sp}%;background:${col};border-radius:999px"></div>
+        </div>
+        <span style="width:38px;text-align:right;color:${col};font-weight:600">${sp}%</span>
+        <span style="width:50px;text-align:right;font-size:.65rem;color:${col}">${s.is_fake ? "FAKE" : "REAL"}</span>
+        <span style="width:48px;text-align:right;font-size:.62rem;color:var(--muted)">${s.confidence}</span>
+      </div>`;
+  }).join("");
+
+  // Scroll to result
+  result.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ── Webcam Face Detection ─────────────────────────────────────────────────────
+
+let webcamStream     = null;
+let webcamInterval   = null;
+let camFrameBuffer   = [];
+let camConsecFake    = 0;
+let analysisActive   = false;
+const CAM_N_FRAMES   = 8;
+const CAM_INTERVAL   = 900;
+let mockPreviewTimer = null;
+
+function stopMockPreview() {
+  if(mockPreviewTimer) {
+    clearInterval(mockPreviewTimer);
+    mockPreviewTimer = null;
+  }
+  const img = document.getElementById("mockPreviewImage");
+  if(img) {
+    img.style.display = "none";
+    img.src = "";
+  }
+  const video = document.getElementById("webcamVideo");
+  const canvas = document.getElementById("faceCanvas");
+  if(video) video.style.display = "block";
+  if(canvas) canvas.style.display = "block";
+}
+
+async function startMockPreviewFeed() {
+  try {
+    let ready = false;
+    for(let i = 0; i < 8; i++) {
+      const probe = await fetch(`${API}/api/mock-preview.jpg?t=${Date.now()}`, { cache:"no-store" });
+      if(probe.ok) {
+        ready = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 180));
+    }
+    if(!ready) return false;
+
+    const img = document.getElementById("mockPreviewImage");
+    const video = document.getElementById("webcamVideo");
+    const canvas = document.getElementById("faceCanvas");
+    if(!img || !video || !canvas) return false;
+
+    stopMockPreview();
+    video.style.display = "none";
+    canvas.style.display = "none";
+    img.style.display = "block";
+    document.getElementById("camPlaceholder").style.display = "none";
+
+    const refresh = () => {
+      img.src = `${API}/api/mock-preview.jpg?t=${Date.now()}`;
+    };
+    refresh();
+    mockPreviewTimer = setInterval(refresh, 320);
+    return true;
+  } catch(_) {
+    return false;
+  }
+}
+
+function showCameraRetry(message) {
+  const ph = document.getElementById("camPlaceholder");
+  if(!ph) return;
+  ph.style.display = "flex";
+  ph.innerHTML = `
+    <div style="font-size:.75rem;color:var(--muted);text-align:center;padding:0 20px">
+      ${message}
+    </div>
+    <button onclick="startWebcam()" style="
+      margin-top:8px;padding:8px 20px;
+      background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,102,255,.15));
+      border:1px solid rgba(0,212,255,.3);border-radius:8px;
+      color:var(--accent);font-family:'Syne',sans-serif;
+      font-weight:600;font-size:.75rem;cursor:pointer;">Retry Camera</button>`;
+}
+
+async function startWebcam() {
+  document.getElementById("webcamContainer").style.display = "block";
+  stopMockPreview();
+
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const hasMockFeed = await startMockPreviewFeed();
+    if(hasMockFeed) return;
+    showCameraRetry("Camera API is unavailable in this browser context. Open from http://localhost:8000/app and try again.");
+    return;
+  }
+
+  try {
+    webcamStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+      audio: false
+    });
+
+    const video = document.getElementById("webcamVideo");
+    const canvas = document.getElementById("faceCanvas");
+    video.style.display = "block";
+    canvas.style.display = "block";
+    video.srcObject = webcamStream;
+    await video.play();
+
+    document.getElementById("camPlaceholder").style.display = "none";
+
+    video.addEventListener("loadedmetadata", () => {
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+    });
+
+    if(analysisActive) {
+      if(webcamInterval) clearInterval(webcamInterval);
+      webcamInterval = setInterval(captureAndAnalyze, CAM_INTERVAL);
+    }
+    console.log("Webcam started");
+
+  } catch(err) {
+    console.warn("Webcam error:", err?.name || "", err?.message || "");
+
+    if(currentMode === "mock") {
+      const hasMockFeed = await startMockPreviewFeed();
+      if(hasMockFeed) return;
+    }
+
+    const msgs = {
+      NotAllowedError: "Camera permission was denied. Allow camera access for this site and retry.",
+      NotReadableError: "Camera device is busy (likely opened by another app). Close that app and retry.",
+      OverconstrainedError: "Requested camera settings are unsupported on this device. Retry to use defaults.",
+      AbortError: "Camera start was interrupted. Retry once.",
+    };
+    const fallbackMsg = !window.isSecureContext
+      ? "Camera requires a secure context. Open from http://localhost:8000/app and retry."
+      : "Camera could not be started. Check browser and OS camera permissions, then retry.";
+    showCameraRetry(msgs[err?.name] || fallbackMsg);
+  }
+}
+
+// Scanning animation before analysis starts
+let scanY = 0;
+let scanAnim = null;
+
+function drawScanAnimation() {
+  if(scanAnim) cancelAnimationFrame(scanAnim);
+  const video  = document.getElementById("webcamVideo");
+  const canvas = document.getElementById("faceCanvas");
+
+  function frame() {
+    if(analysisActive || !webcamStream) return; // stop once real analysis begins
+    const ctx = canvas.getContext("2d");
+    canvas.width  = video.videoWidth  || canvas.width;
+    canvas.height = video.videoHeight || canvas.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Moving scan line
+    scanY = (scanY + 2) % canvas.height;
+    const grad = ctx.createLinearGradient(0, scanY - 20, 0, scanY + 20);
+    grad.addColorStop(0,   "transparent");
+    grad.addColorStop(0.5, "rgba(0,212,255,0.35)");
+    grad.addColorStop(1,   "transparent");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, scanY - 20, canvas.width, 40);
+
+    // Scanning label
+    ctx.fillStyle = "rgba(0,212,255,0.6)";
+    ctx.font      = "bold 11px 'DM Mono',monospace";
+    ctx.fillText("SCANNING...", 14, canvas.height - 14);
+
+    scanAnim = requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+// ── Frame capture & send to backend ──────────────────────────────────────────
+
+async function captureAndAnalyze() {
+  if(!analysisActive) return;
+  const video  = document.getElementById("webcamVideo");
+  const canvas = document.getElementById("faceCanvas");
+  if(!video.videoWidth) return;
+
+  // Capture frame
+  const off   = document.createElement("canvas");
+  off.width   = video.videoWidth;
+  off.height  = video.videoHeight;
+  off.getContext("2d").drawImage(video, 0, 0);
+  const dataUrl = off.toDataURL("image/jpeg", 0.75);
+
+  camFrameBuffer.push(dataUrl);
+  if(camFrameBuffer.length > CAM_N_FRAMES) camFrameBuffer.shift();
+  if(camFrameBuffer.length < CAM_N_FRAMES) return;
+
+  try {
+    const res = await fetch(`${API}/api/analyze-frame`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ frames: camFrameBuffer }),
+    });
+    if(!res.ok) return;
+    const data = await res.json();
+    renderDetection(data, canvas, video);
+  } catch(e) { /* backend busy, skip */ }
+}
+
+// ── Draw face detection overlay ───────────────────────────────────────────────
+
+function renderDetection(data, canvas, video) {
+  const prob   = data.fake_probability || 0;
+  const isFake = data.is_fake;
+  const conf   = data.confidence || "LOW";
+  const faces  = data.faces  || [];
+  const pct    = Math.round(prob * 100);
+
+  // Update HUD
+  const bar = document.getElementById("camProbBar");
+  bar.style.width      = pct + "%";
+  bar.style.background = prob > 0.65 ? "var(--danger)" : prob > 0.4 ? "var(--warn)" : "var(--safe)";
+  document.getElementById("camProbPct").textContent = pct + "%";
+
+  const verdict = document.getElementById("camVerdict");
+  if(isFake) {
+    verdict.style.cssText += ";background:rgba(255,56,96,.9);border-color:rgba(255,56,96,.7);color:#fff";
+    verdict.textContent    = "⚠  FAKE";
+  } else {
+    verdict.style.cssText += ";background:rgba(0,229,160,.2);border-color:rgba(0,229,160,.5);color:#00e5a0";
+    verdict.textContent    = "✓  REAL";
+  }
+
+  if(isFake) camConsecFake++; else camConsecFake = 0;
+
+  const banner = document.getElementById("camAlertBanner");
+  if(camConsecFake >= 3) {
+    banner.style.display = "flex";
+    document.getElementById("camAlertTitle").textContent = "🚨 DEEPFAKE DETECTED";
+    document.getElementById("camAlertSub").textContent   =
+      `${pct}% fake probability · ${conf} confidence · ${camConsecFake} consecutive detections`;
+  } else if(camConsecFake === 0) {
+    banner.style.display = "none";
+  }
+
+  // ── Draw on canvas ──────────────────────────────────────────────────────────
+  // Canvas is set to native video resolution (videoWidth × videoHeight).
+  // Face box coords from the backend are also in native video resolution.
+  // → No scaling needed. scaleX = scaleY = 1.0 always.
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx     = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if(faces.length > 0) {
+    faces.forEach(f => drawFaceMark(ctx, f.x, f.y, f.w, f.h, f.prob, isFake));
+  } else {
+    // No face detected — draw a subtle searching indicator in the center
+    // instead of a large mis-sized guess rectangle.
+    const cw = canvas.width  * 0.28;
+    const ch = canvas.height * 0.38;
+    const cx = (canvas.width  - cw) / 2;
+    const cy = (canvas.height - ch) / 2 - canvas.height * 0.04;
+    drawFaceMarkSearching(ctx, cx, cy, cw, ch);
+  }
+}
+
+// ── New face marking style: corner brackets + dot-grid + label chip ───────────
+
+function drawFaceMark(ctx, x, y, w, h, prob, isFake) {
+  // Coords are already in canvas (= native video) coordinate space — no scaling.
+  const color   = isFake ? "#ff3860" : "#00e5a0";
+  const colorBg = isFake ? "rgba(255,56,96,.08)" : "rgba(0,229,160,.06)";
+  const pct     = Math.round(prob * 100);
+  const label   = isFake ? `⚠ FAKE  ${pct}%` : `✓ REAL  ${pct}%`;
+  const pad     = 6;
+
+  x -= pad; y -= pad; w += pad*2; h += pad*2;
+
+  // ── Semi-transparent fill ───────────────────────────────────────────────────
+  ctx.fillStyle = colorBg;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 6);
+  ctx.fill();
+
+  // ── Dot-grid overlay inside box ─────────────────────────────────────────────
+  ctx.fillStyle = isFake ? "rgba(255,56,96,.18)" : "rgba(0,229,160,.15)";
+  const dotGap = 12;
+  for(let dx = x + dotGap; dx < x + w - 4; dx += dotGap) {
+    for(let dy = y + dotGap; dy < y + h - 4; dy += dotGap) {
+      ctx.beginPath();
+      ctx.arc(dx, dy, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ── Corner brackets ─────────────────────────────────────────────────────────
+  const L   = Math.min(w, h) * 0.2;
+  const lw  = 3;
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = lw;
+  ctx.lineCap     = "round";
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 10;
+
+  const corners = [
+    [x,     y,     L, 0,  L, 0 ],  // top-left
+    [x+w,   y,    -L, 0,  L, 0 ],  // top-right
+    [x,     y+h,   L, 0, -L, 0 ],  // bottom-left
+    [x+w,   y+h,  -L, 0, -L, 0 ],  // bottom-right
+  ];
+
+  corners.forEach(([ox, oy, hx, hy, vx, vy]) => {
+    // horizontal arm
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + hx, oy + hy); ctx.stroke();
+    // vertical arm
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + vx, oy + vy); ctx.stroke();
+  });
+
+  // ── Crosshair centre ────────────────────────────────────────────────────────
+  const cx2 = x + w/2, cy2 = y + h/2, cr = 6;
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 1.5;
+  ctx.shadowBlur  = 6;
+  ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx2 - cr*2, cy2); ctx.lineTo(cx2 + cr*2, cy2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx2, cy2 - cr*2); ctx.lineTo(cx2, cy2 + cr*2); ctx.stroke();
+
+  // ── Label chip ──────────────────────────────────────────────────────────────
+  ctx.shadowBlur = 0;
+  ctx.font       = "bold 12px 'DM Mono',monospace";
+  const tw       = ctx.measureText(label).width;
+  const chipW    = tw + 20;
+  const chipH    = 24;
+  const chipX    = x;
+  const chipY    = y - chipH - 6;
+
+  // Chip background
+  ctx.fillStyle = isFake ? "rgba(255,56,96,.9)" : "rgba(0,229,160,.88)";
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 8;
+  ctx.beginPath();
+  ctx.roundRect(chipX, Math.max(2, chipY), chipW, chipH, 5);
+  ctx.fill();
+
+  // Chip text
+  ctx.shadowBlur  = 0;
+  ctx.fillStyle   = isFake ? "#fff" : "#001a0e";
+  ctx.fillText(label, chipX + 10, Math.max(2, chipY) + 16);
+}
+
+// ── "Searching for face" indicator — shown when backend finds no face ─────────
+
+function drawFaceMarkSearching(ctx, x, y, w, h) {
+  const color = "rgba(0,212,255,0.45)";
+  const L = Math.min(w, h) * 0.22;
+
+  // Dashed border
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 1.5;
+  ctx.setLineDash([6, 5]);
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 6);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Corner brackets
+  ctx.strokeStyle = "rgba(0,212,255,0.7)";
+  ctx.lineWidth   = 2.5;
+  ctx.lineCap     = "round";
+  ctx.shadowColor = "rgba(0,212,255,0.5)";
+  ctx.shadowBlur  = 8;
+  [[x,   y,    L, 0,  L,  0],
+   [x+w, y,   -L, 0,  L,  0],
+   [x,   y+h,  L, 0, -L,  0],
+   [x+w, y+h, -L, 0, -L,  0]].forEach(([ox,oy,hx,hy,vx,vy]) => {
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox+hx, oy+hy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox+vx, oy+vy); ctx.stroke();
+  });
+
+  // "Searching" label
+  ctx.shadowBlur  = 0;
+  ctx.font        = "bold 11px 'DM Mono',monospace";
+  ctx.fillStyle   = "rgba(0,212,255,0.6)";
+  ctx.fillText("SEARCHING FOR FACE...", x + 8, y + h + 16);
+}
+
+// ── Stop Webcam Function ─────────────────────────────────────────────────────
+
+function stopWebcam() {
+  // Stop the webcam stream tracks
+  if (webcamStream) {
+    webcamStream.getTracks().forEach(track => track.stop());
+    webcamStream = null;
+  }
+
+  stopMockPreview();
+  
+  // Clear the webcam interval
+  if (webcamInterval) {
+    clearInterval(webcamInterval);
+    webcamInterval = null;
+  }
+  
+  // Reset video element
+  const video = document.getElementById("webcamVideo");
+  if (video) {
+    video.srcObject = null;
+  }
+  
+  // Hide webcam container and show placeholder
+  const container = document.getElementById("webcamContainer");
+  if (container) {
+    container.style.display = "none";
+  }
+  
+  // Reset the placeholder to show "Requesting camera access..."
+  const placeholder = document.getElementById("camPlaceholder");
+  if (placeholder) {
+    placeholder.style.display = "flex";
+    placeholder.innerHTML = `
+      <div style="font-size:2.2rem;opacity:.4">📷</div>
+      <div style="font-size:.75rem;color:var(--muted)">Camera disabled</div>
+      <button onclick="startWebcam()" style="
+        margin-top:4px;padding:8px 20px;
+        background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(0,102,255,.15));
+        border:1px solid rgba(0,212,255,.3);border-radius:8px;
+        color:var(--accent);font-family:'Syne',sans-serif;
+        font-weight:600;font-size:.75rem;cursor:pointer;
+      ">Enable Camera</button>`;
+  }
+  
+  console.log("Webcam stopped and resources released");
+}
+
+// ── Session lifecycle ─────────────────────────────────────────────────────────
+
+const _origOnSessionStarted = onSessionStarted;
+onSessionStarted = function(msg) {
+  _origOnSessionStarted(msg);
+  analysisActive = true;
+  if(!webcamStream) {
+    startWebcam();
+  } else {
+    // Camera already running — just activate analysis
+    if(scanAnim) cancelAnimationFrame(scanAnim);
+    if(!webcamInterval) webcamInterval = setInterval(captureAndAnalyze, CAM_INTERVAL);
+  }
+};
+
+const _origOnSessionEnded = onSessionEnded;
+onSessionEnded = function() {
+  _origOnSessionEnded();
+  analysisActive = false;
+  camFrameBuffer = [];
+  camConsecFake  = 0;
+
+  // ── Clear all participant cards ──────────────────────────────────────────
+  participants = {};
+  document.getElementById("statParticipants").textContent = "0";
+  document.getElementById("participantCount").textContent = "0";
+  document.getElementById("participantsContainer").innerHTML =
+    `<div class="empty-state"><div class="empty-icon">👁️</div><div>No active session</div></div>`;
+
+  // Stop webcam when session ends
+  stopWebcam();
+
+  document.getElementById("camVerdict").textContent          = "● STANDBY";
+  document.getElementById("camVerdict").style.background     = "rgba(0,0,0,.7)";
+  document.getElementById("camVerdict").style.borderColor    = "var(--border)";
+  document.getElementById("camVerdict").style.color          = "var(--muted)";
+  document.getElementById("camAlertBanner").style.display   = "none";
+  document.getElementById("camProbBar").style.width          = "0%";
+  document.getElementById("camProbPct").textContent          = "0%";
+
+  const canvas = document.getElementById("faceCanvas");
+  if(canvas) canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+  drawScanAnimation();
+};
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+connectWS();
+// Webcam starts ONLY after Join button — no auto-start
+</script>
+
+</body>
+</html>
